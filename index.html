@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<!--
+  JUGGLE — Medical Word Game
+  Google Authentication integrated via Google Identity Services (no Firebase).
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>JUGGLE — Medical Wordle</title>
+
+  <!-- React (UMD) -->
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+
+  <!-- Tailwind (CDN) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Google Identity Services -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+
+  <!-- Prevent favicon 404 -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'/>" />
+
+  <style>
+    :root {
+      --bg: #f8f7f4;
+      --tile: #f0eee9;
+      --border: #d7d3ca;
+      --text: #1f2937;
+      --wrong: #fca5a5;
+      --present: #f6d26b;
+      --correct: #6bcf8b;
+      --key: #e9e6df;
+    }
+    html, body, #root { height: 100%; }
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+      background: var(--bg);
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    .tile {
+      background: var(--tile);
+      border: 1px solid var(--border);
+      border-radius: 0.375rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background-color 0.2s ease;
+    }
+    .tile.wrong { background: var(--wrong); color: #3b1f1f; }
+    .tile.present { background: var(--present); color: #2b1b00; }
+    .tile.correct { background: var(--correct); color: #03310a; }
+    .key {
+      background: var(--key);
+      border: 1px solid var(--border);
+      border-radius: 0.375rem;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .toast {
+      position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+      background: white; border-radius: 0.5rem; padding: 0.5rem 0.75rem; font-weight: 700;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.12); z-index: 60;
+    }
+    .modal-backdrop {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+      display: flex; align-items: center; justify-content: center; z-index: 80;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script>
+    (function() {
+      const { useState, useEffect, useRef } = React;
+
+      /* ---------- Small utilities (used elsewhere in your code) ---------- */
+      function toUpperAlpha(s) { return (s || "").replace(/[^a-z]/gi, "").toUpperCase(); }
+      function getCSS(name) {
+        return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+      }
+
+      /* ---------- Game data ---------- */
+      const TARGETS = [
+        { w: "BLOOD", specific: "Red cells, white cells, platelets, and plasma combined" },
+        { w: "BRAIN", specific: "Organ protected by the skull that processes thoughts" },
+        { w: "HEART", specific: "Four-chambered muscle that circulates blood" },
+        { w: "LIVER", specific: "Largest internal organ that processes nutrients" },
+        { w: "SPINE", specific: "Vertebral column protecting spinal cord" },
+        { w: "NERVE", specific: "Fiber that transmits electrical impulses" },
+        { w: "FEVER", specific: "Elevated body temperature above 100.4°F" },
+        { w: "CHEST", specific: "Body cavity containing heart and lungs" },
+        { w: "PULSE", specific: "Arterial pressure wave felt at wrist" },
+        { w: "VIRUS", specific: "Microscopic pathogen requiring host cells" },
+        { w: "TUMOR", specific: "Mass of cells dividing uncontrollably" },
+        { w: "ORGAN", specific: "Tissue structure performing specific function" },
+        { w: "WOUND", specific: "Break in skin or tissue integrity" },
+        { w: "TOXIC", specific: "Substance causing cellular damage" },
+        { w: "ACUTE", specific: "Condition developing rapidly and severely" },
+        { w: "JOINT", specific: "Where two bones meet and articulate" },
+        { w: "GLAND", specific: "Tissue producing hormones or enzymes" },
+        { w: "SERUM", specific: "Liquid portion of blood after clotting" },
+        { w: "DRUGS", specific: "Chemical substances affecting body function" },
+        { w: "SLEEP", specific: "Naturally recurring unconscious condition" },
+        { w: "TEETH", specific: "Hard calcium structures for chewing" },
+        { w: "BONES", specific: "Calcified connective tissue framework" },
+        { w: "LYMPH", specific: "Colorless fluid in lymphatic system" },
+        { w: "SHOCK", specific: "Inadequate tissue perfusion condition" },
+        { w: "SWEAT", specific: "Salty fluid from eccrine glands" },
+        { w: "COLON", specific: "Final section of digestive tract" },
+        { w: "FIBER", specific: "Indigestible plant material aiding digestion" },
+        { w: "LATEX", specific: "Natural polymer causing allergic reactions" },
+        { w: "DEPOT", specific: "Long-acting injection site" },
+        { w: "DONOR", specific: "Individual providing organs or blood" },
+        { w: "FLORA", specific: "Normal microorganisms in the body" },
+        { w: "GRAFT", specific: "Tissue moved from one location" },
+        { w: "HABIT", specific: "Automatic behavioral pattern" },
+        { w: "LUPUS", specific: "Systemic inflammatory autoimmune disorder" },
+        { w: "MANIA", specific: "Elevated, expansive, or irritable mood" },
+        { w: "NASAL", specific: "Pertaining to the nasal cavity" },
+        { w: "OPTIC", specific: "Concerning vision or eye nerves" },
+        { w: "PANEL", specific: "Series of laboratory tests" },
+        { w: "RENAL", specific: "Pertaining to kidney function" },
+        { w: "SCALP", specific: "Skin covering the skull" },
+        { w: "SINUS", specific: "Hollow air space in facial bones" },
+        { w: "TONIC", specific: "Medicine restoring normal function" },
+        { w: "ULCER", specific: "Erosion in mucous membrane" },
+        { w: "VALVE", specific: "Structure preventing blood backflow" },
+        { w: "VIRAL", specific: "Caused by virus particles" },
+        { w: "AGING", specific: "Progressive physiological decline" },
+        { w: "BLIND", specific: "Unable to see or perceive" },
+        { w: "CLAMP", specific: "Device for controlling bleeding" },
+        { w: "EDEMA", specific: "Excess fluid in tissues" },
+        { w: "FATAL", specific: "Resulting in death" },
+        { w: "GAUGE", specific: "Instrument for needle size" },
+        { w: "KNIFE", specific: "Surgical blade instrument" },
+        { w: "LABOR", specific: "Childbirth contractions phase" },
+        { w: "MOLAR", specific: "Grinding tooth in jaw" },
+        { w: "NURSE", specific: "Licensed healthcare professional" },
+        { w: "ONSET", specific: "Initial appearance of symptoms" },
+        { w: "PANIC", specific: "Sudden overwhelming anxiety attack" },
+        { w: "RAPID", specific: "Fast heart rate condition" },
+        { w: "SCALE", specific: "Weight measurement instrument" },
+        { w: "VITAL", specific: "Essential for survival" },
+        { w: "WASTE", specific: "Body's unwanted byproducts" },
+        { w: "BRACE", specific: "Orthopedic stabilizing apparatus" },
+        { w: "CHILL", specific: "Shivering response to fever" },
+        { w: "DRAIN", specific: "Tube for wound discharge" },
+        { w: "GOUGE", specific: "Excavated wound or injury" },
+        { w: "INDEX", specific: "Ratio for health assessment" },
+        { w: "PATCH", specific: "Transdermal medication delivery" },
+        { w: "RANGE", specific: "Reference values for tests" },
+        { w: "SCOPE", specific: "Endoscopic examination tool" },
+        { w: "TREAT", specific: "Therapeutic intervention" },
+        { w: "UNITE", specific: "Bone healing process" },
+        { w: "VOMIT", specific: "Forceful gastric contents ejection" },
+        { w: "YIELD", specific: "Laboratory test result quantity" },
+      ];
+
+      const UNLIMITED_EMAILS = ["abhishek.benur@gmail.com"];
+
+      function saveLoginDetails(info) {
+        try {
+          const list = JSON.parse(localStorage.getItem("juggleLogins") || "[]");
+          list.push({ ...info, date: new Date().toISOString() });
+          localStorage.setItem("juggleLogins", JSON.stringify(list));
+        } catch (_) {}
+      }
+
+      function getTodayIndex() {
+        const start = new Date("2025-01-01");
+        const now = new Date(); now.setHours(0,0,0,0);
+        const days = Math.floor((now - start) / (24*60*60*1000));
+        return ((days % TARGETS.length) + TARGETS.length) % TARGETS.length;
+      }
+
+      function getStats(user) {
+        const all = JSON.parse(localStorage.getItem("juggleStats") || "{}");
+        return all[user] || { date: "", plays: 0 };
+      }
+      function setStats(user, stats) {
+        const all = JSON.parse(localStorage.getItem("juggleStats") || "{}");
+        all[user] = stats;
+        localStorage.setItem("juggleStats", JSON.stringify(all));
+      }
+      function incrementPlays(user) {
+        const stats = getStats(user);
+        const today = new Date().toISOString().split("T")[0];
+        if (stats.date !== today) { stats.date = today; stats.plays = 0; }
+        stats.plays += 1;
+        setStats(user, stats);
+        return stats.plays;
+      }
+      function canPlay(user) {
+        if (UNLIMITED_EMAILS.includes(user)) return true;
+        const stats = getStats(user);
+        const today = new Date().toISOString().split("T")[0];
+        if (stats.date !== today) return true;
+        return stats.plays < 2;
+      }
+
+      function scoreGuess(guess, answer) {
+        const res = Array(5).fill("wrong");
+        const counts = {};
+        for (let i = 0; i < 5; i++) counts[answer[i]] = (counts[answer[i]] || 0) + 1;
+        for (let i = 0; i < 5; i++) {
+          if (guess[i] === answer[i]) { res[i] = "correct"; counts[guess[i]]--; }
+        }
+        for (let i = 0; i < 5; i++) {
+          if (res[i] === "correct") continue;
+          const g = guess[i];
+          if (counts[g] > 0) { res[i] = "present"; counts[g]--; }
+        }
+        return res;
+      }
+
+      function AdModal({ open, seconds, imageSrc, onDone }) {
+        return (
+          open &&
+          React.createElement(
+            "div", { className: "modal-backdrop" },
+            React.createElement(
+              "div", { className: "bg-white rounded-2xl p-6 w-[min(92vw,420px)] shadow-lg text-center" },
+              React.createElement("h2", { className: "text-xl font-extrabold mb-2" }, "Ad Break"),
+              React.createElement("img", { src: imageSrc, alt: "Advertisement", className: "w-full rounded-xl mb-3" }),
+              React.createElement("p", { className: "mb-3 text-sm text-gray-600" }, "Thanks! This keeps JUGGLE free."),
+              React.createElement(
+                "button",
+                {
+                  onClick: seconds <= 0 ? onDone : undefined,
+                  disabled: seconds > 0,
+                  className: "px-4 py-2 rounded-2xl text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-60",
+                },
+                seconds > 0 ? `Continue in ${seconds}s` : "Continue"
+              )
+            )
+          )
+        );
+      }
+
+      function Welcome({ onPlay }) {
+        return React.createElement(
+          "div", { className: "min-h-[60vh] flex items-center justify-center px-4" },
+          React.createElement(
+            "div", { className: "text-center max-w-xl" },
+            React.createElement("h2", { className: "text-3xl sm:text-4xl font-extrabold mb-2" }, "Welcome to JUGGLE"),
+            React.createElement("p", { className: "text-gray-600 mb-6" }, "A medical word game. Guess today's five-letter word in up to six attempts."),
+            React.createElement("button", { onClick: onPlay, className: "px-5 py-3 rounded-2xl font-bold bg-blue-600 text-white shadow hover:bg-blue-700" }, "PLAY NOW"),
+            React.createElement(
+              "div", { className: "mt-6 text-sm text-gray-500" },
+              "Created by ",
+              React.createElement("a", { href: "https://parabx.com", target: "_blank", rel: "noopener noreferrer", className: "text-blue-600 underline" }, "Parabox")
+            )
+          )
+        );
+      }
+
+      /* -------------------- SIGN IN (Google Identity Services) -------------------- */
+      function SignIn({ onSignedIn, onBack }) {
+        // Decode JWT from Google to get user details
+        function parseJwt(token) {
+          const base64Url = token.split(".")[1];
+          const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+          const jsonPayload = decodeURIComponent(
+            atob(base64).split("").map(function(c) {
+              return "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2);
+            }).join("")
+          );
+          return JSON.parse(jsonPayload);
+        }
+
+        // Handle Google callback
+        function handleGoogleResponse(response) {
+          try {
+            const payload = parseJwt(response.credential || "");
+            const email = (payload.email || "").toLowerCase();
+            // persist locally (feel free to extend)
+            localStorage.setItem("juggleUser", email);
+            localStorage.setItem("juggleName", payload.name || "");
+            localStorage.setItem("juggleSub", payload.sub || ""); // Google user id
+            localStorage.setItem("jugglePicture", payload.picture || "");
+            saveLoginDetails({ provider: "google", email, sub: payload.sub });
+            onSignedIn(email);
+          } catch (e) {
+            alert("Google sign-in failed. Please try again.");
+          }
+        }
+
+        useEffect(() => {
+          // Wait for GIS script
+          function init() {
+            if (!window.google || !window.google.accounts || !window.google.accounts.id) return;
+            window.google.accounts.id.initialize({
+              client_id: "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com",
+              callback: handleGoogleResponse,
+              auto_select: false,
+              cancel_on_tap_outside: true,
+            });
+            // Render the Google button
+            const el = document.getElementById("googleSignInDiv");
+            if (el) {
+              window.google.accounts.id.renderButton(el, {
+                theme: "outline",
+                size: "large",
+                shape: "pill",
+                width: 320,
+                text: "continue_with",
+                logo_alignment: "left",
+              });
+            }
+            // Optionally show One Tap as well
+            window.google.accounts.id.prompt();
+          }
+
+          const t = setInterval(() => {
+            if (window.google && window.google.accounts && window.google.accounts.id) {
+              clearInterval(t); init();
+            }
+          }, 50);
+
+          return () => clearInterval(t);
+        }, []);
+
+        return React.createElement(
+          "div",
+          { className: "min-h-[60vh] flex items-center justify-center px-4" },
+          React.createElement(
+            "div",
+            { className: "text-center max-w-lg w-full" },
+            React.createElement("h2", { className: "text-2xl font-extrabold mb-4" }, "Sign in to play"),
+            React.createElement("p", { className: "mb-4 text-gray-600" }, "Use your Google account to continue."),
+            React.createElement("div", { id: "googleSignInDiv", className: "w-full flex justify-center mb-2" }),
+            React.createElement(
+              "button",
+              { onClick: onBack, className: "mt-4 px-4 py-2 rounded-xl font-semibold bg-gray-300 text-gray-800 hover:bg-gray-400" },
+              "Back"
+            ),
+            React.createElement(
+              "div", { className: "mt-6 text-sm text-gray-500" },
+              "Created by ",
+              React.createElement("a", { href: "https://parabx.com", target: "_blank", rel: "noopener noreferrer", className: "text-blue-600 underline" }, "Parabox")
+            )
+          )
+        );
+      }
+
+      /* -------------------- Game -------------------- */
+      function Game({ answer, hintSpecific, onEndGame, onExit }) {
+        const [rows, setRows] = useState(Array(6).fill(""));
+        const [states, setStates] = useState(Array(6).fill(Array(5).fill("empty")));
+        const [typed, setTyped] = useState(Array(5).fill(""));
+        const [row, setRow] = useState(0);
+        const [over, setOver] = useState(false);
+        const [toast, setToast] = useState(null);
+        const [checkingWord, setCheckingWord] = useState(false);
+        const [showHints, setShowHints] = useState(false);
+        const [hintFirst, setHintFirst] = useState(false);
+        const [hintSecond, setHintSecond] = useState(false);
+        const [hintDesc, setHintDesc] = useState(false);
+        const [adOpen, setAdOpen] = useState(false);
+        const [adSecs, setAdSecs] = useState(0);
+        const adCallback = useRef(null);
+        const inputRef = useRef(null);
+
+        useEffect(() => { if (inputRef.current) inputRef.current.focus(); }, []);
+        useEffect(() => {
+          const handleKey = (e) => {
+            if (over) return;
+            if (e.key === "Enter") return submit();
+            if (e.key === "Backspace") return back();
+            if (/^[a-zA-Z]$/.test(e.key)) return input(e.key.toUpperCase());
+          };
+          window.addEventListener('keydown', handleKey);
+          return () => window.removeEventListener('keydown', handleKey);
+        }, [typed, row, over]);
+
+        function ping(msg) { setToast(msg); setTimeout(() => setToast(null), 1200); }
+        function input(ch) {
+          for (let i = 0; i < 5; i++) {
+            if (!typed[i]) { const next = typed.slice(); next[i] = ch; setTyped(next); return; }
+          }
+        }
+        function back() {
+          for (let i = 4; i >= 0; i--) {
+            if (typed[i]) { const next = typed.slice(); next[i] = ""; setTyped(next); return; }
+          }
+        }
+        async function submit() {
+          if (over) return;
+          const guess = toUpperAlpha(typed.join(""));
+          if (guess.length !== 5) { ping("ENTER A 5-LETTER WORD"); return; }
+          setCheckingWord(true); await new Promise((res) => setTimeout(res, 50)); setCheckingWord(false);
+          const sc = scoreGuess(guess, answer);
+          const newStates = states.slice(); newStates[row] = sc; setStates(newStates);
+          const newRows = rows.slice(); newRows[row] = guess; setRows(newRows);
+          if (guess === answer) { setOver(true); onEndGame(true, row + 1); }
+          else if (row === 5) { setOver(true); onEndGame(false, 6); }
+          else { setRow(row + 1); setTyped(Array(5).fill("")); }
+        }
+        function keyColour(k) {
+          let state = "";
+          for (let r = 0; r < row; r++) {
+            for (let c = 0; c < 5; c++) {
+              if ((rows[r] || "")[c] === k) {
+                const st = (states[r] || [])[c];
+                if (st === "correct") return getCSS("--correct");
+                if (st === "present") state = "present";
+                else if (st === "wrong" && state !== "present") state = "wrong";
+              }
+            }
+          }
+          if (state === "present") return getCSS("--present");
+          if (state === "wrong") return getCSS("--wrong");
+          return getCSS("--key");
+        }
+        function unlockHint(cb) { adCallback.current = cb; setAdSecs(5); setAdOpen(true); }
+        useEffect(() => {
+          if (adOpen) {
+            const t = setInterval(() => {
+              setAdSecs((s) => {
+                if (s <= 1) { clearInterval(t); setAdOpen(false); if (adCallback.current) { adCallback.current(); adCallback.current = null; } return 0; }
+                return s - 1;
+              });
+            }, 1000);
+            return () => clearInterval(t);
+          }
+        }, [adOpen]);
+
+        return React.createElement(
+          "div",
+          null,
+          React.createElement(
+            "div", { className: "mb-3 flex items-center gap-2" },
+            React.createElement(
+              "button",
+              { onClick: () => setShowHints((v) => !v), className: "px-3 py-2 rounded-2xl font-semibold bg-gray-200 text-gray-800 shadow hover:bg-gray-300" },
+              React.createElement("svg", { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", xmlns: "http://www.w3.org/2000/svg", className: "mr-2" },
+                React.createElement("path", { d: "M9 21h6m-8-3h10M12 3a7 7 0 00-4 12c.6.6 1 1.5 1 2.5V18h6v-.5c0-1 .4-1.9 1-2.5A7 7 0 0012 3z", stroke: "currentColor", strokeWidth: 1.6, strokeLinecap: "round", strokeLinejoin: "round" })
+              ),
+              showHints ? "Hide hints" : "Show hints"
+            )
+          ),
+          showHints && React.createElement(
+            "div", { className: "bg-gray-100 rounded-2xl p-3 shadow mb-3 text-sm" },
+            React.createElement(
+              "div", { className: "flex items-center justify-between mb-2" },
+              React.createElement("div", null,
+                React.createElement("span", { className: "inline-block bg-gray-200 rounded-full px-2 py-0.5 mr-2 text-xs font-bold" }, "HINT 1"),
+                React.createElement("span", { className: "opacity-85" }, hintFirst ? `Starting letter: ${answer[0]}` : "Reveal starting letter")
+              ),
+              React.createElement("button",
+                { onClick: () => unlockHint(() => setHintFirst(true)), disabled: hintFirst, className: "px-3 py-1 rounded-2xl text-xs font-semibold bg-blue-600 text-white shadow hover:bg-blue-700 disabled:opacity-60" },
+                hintFirst ? "Unlocked" : "Watch ad"
+              )
+            ),
+            React.createElement(
+              "div", { className: "flex items-center justify-between mb-2" },
+              React.createElement("div", null,
+                React.createElement("span", { className: "inline-block bg-gray-200 rounded-full px-2 py-0.5 mr-2 text-xs font-bold" }, "HINT 2"),
+                React.createElement("span", { className: "opacity-85" }, hintSecond ? `Second letter: ${answer[1]}` : "Reveal second letter")
+              ),
+              React.createElement("button",
+                { onClick: () => unlockHint(() => setHintSecond(true)), disabled: hintSecond, className: "px-3 py-1 rounded-2xl text-xs font-semibold bg-blue-600 text-white shadow hover:bg-blue-700 disabled:opacity-60" },
+                hintSecond ? "Unlocked" : "Watch ad"
+              )
+            ),
+            React.createElement(
+              "div", { className: "flex items-center justify-between" },
+              React.createElement("div", null,
+                React.createElement("span", { className: "inline-block bg-gray-200 rounded-full px-2 py-0.5 mr-2 text-xs font-bold" }, "HINT 3"),
+                React.createElement("span", { className: "opacity-90" }, hintDesc ? hintSpecific : "Reveal one-liner")
+              ),
+              React.createElement("button",
+                {
+                  onClick: () => { if (row < 3 && !over) { ping("Available after 3 guesses"); return; } unlockHint(() => setHintDesc(true)); },
+                  disabled: hintDesc,
+                  className: "px-3 py-1 rounded-2xl text-xs font-semibold bg-blue-600 text-white shadow hover:bg-blue-700 disabled:opacity-60",
+                },
+                hintDesc ? "Unlocked" : "Watch ad"
+              )
+            )
+          ),
+          React.createElement(
+            "div",
+            { className: "grid grid-rows-6 gap-1 sm:gap-2 w-full max-w-[250px] sm:max-w-[300px] md:max-w-[420px] mx-auto my-4" },
+            Array.from({ length: 6 }).map((_, r) =>
+              React.createElement(
+                "div", { key: r, className: "grid grid-cols-5 gap-1 sm:gap-2" },
+                Array.from({ length: 5 }).map((_, c) => {
+                  let ch = ""; let st = "empty";
+                  if (r < row || (r === row && rows[r])) { ch = (rows[r] || "")[c] || ""; st = (states[r] || [])[c] || "empty"; }
+                  else if (r === row) { ch = typed[c] || ""; }
+                  return React.createElement("div", { key: c, className: `tile ${st !== "empty" ? st : ""}`, style: { height: "3rem", fontSize: "1.5rem" } }, ch);
+                })
+              )
+            )
+          ),
+          over && React.createElement(
+            "div", { className: "bg-gray-200 rounded-2xl p-4 text-center mb-3 shadow" },
+            rows[row] === answer
+              ? React.createElement("div", null,
+                  React.createElement("div", { className: "text-lg font-extrabold" }, "Congratulations!"),
+                  React.createElement("div", { className: "text-sm text-gray-600 mt-1" }, "You guessed the word correctly.")
+                )
+              : React.createElement("div", null,
+                  React.createElement("div", { className: "text-lg font-extrabold" }, "Good try!"),
+                  React.createElement("div", { className: "text-sm text-gray-600 mt-1" }, `The correct word was ${answer}.`)
+                )
+          ),
+          React.createElement(
+            "div", { className: "flex flex-col gap-1 items-center px-1" },
+            [
+              ["Q","W","E","R","T","Y","U","I","O","P"],
+              ["A","S","D","F","G","H","J","K","L"],
+              ["ENTER","Z","X","C","V","B","N","M","BACK"],
+            ].map((rk, i) =>
+              React.createElement(
+                "div", { key: i, className: "flex justify-center gap-1" },
+                rk.map((k) =>
+                  React.createElement(
+                    "button",
+                    {
+                      key: k,
+                      onClick: () => { if (k === "ENTER") submit(); else if (k === "BACK") back(); else input(k); },
+                      disabled: over,
+                      className: "key flex items-center justify-center " + ((k === "ENTER" || k === "BACK") ? "w-16" : "w-10"),
+                      style: {
+                        backgroundColor: k.length === 1 ? keyColour(k) : getCSS("--key"),
+                        color: over ? "#aaa" : "#1f2937",
+                      },
+                    },
+                    k === "BACK" ? "⌫" : k
+                  )
+                )
+              )
+            )
+          ),
+          toast && React.createElement("div", { className: "toast" }, toast),
+          React.createElement(AdModal, { open: adOpen, seconds: adSecs, imageSrc: "assets/ad2.png", onDone: () => {} })
+        );
+      }
+
+      function ScoreCard({ result, onPlayAgain, onExit, canPlayMore }) {
+        return React.createElement(
+          "div", { className: "min-h-[60vh] flex items-center justify-center px-4" },
+          React.createElement(
+            "div", { className: "text-center max-w-md" },
+            React.createElement("h2", { className: "text-2xl font-extrabold mb-2" }, result.won ? "Congratulations!" : "Better luck next time!"),
+            React.createElement("p", { className: "mb-4 text-gray-600" },
+              result.won ? `You solved today’s word in ${result.attempts} attempt${result.attempts === 1 ? '' : 's'}.`
+                        : `You used all six attempts. The word was ${result.answer}.`
+            ),
+            React.createElement("button", { onClick: canPlayMore ? onPlayAgain : undefined, disabled: !canPlayMore, className: "px-5 py-3 rounded-2xl font-bold text-white bg-blue-600 shadow hover:bg-blue-700 disabled:opacity-60" }, canPlayMore ? "Play Again" : "Daily limit reached"),
+            React.createElement("button", { onClick: onExit, className: "mt-4 px-4 py-2 rounded-2xl font-semibold bg-gray-200 text-gray-800 hover:bg-gray-300" }, "Home"),
+            React.createElement("div", { className: "mt-6 text-sm text-gray-500" }, "Created by ",
+              React.createElement("a", { href: "https://parabx.com", target: "_blank", rel: "noopener noreferrer", className: "text-blue-600 underline" }, "Parabox")
+            )
+          )
+        );
+      }
+
+      function App() {
+        const [view, setView] = useState("WELCOME");
+        const [user, setUser] = useState(() => localStorage.getItem("juggleUser") || null);
+        const [adOpen, setAdOpen] = useState(false);
+        const [adSecs, setAdSecs] = useState(0);
+        const [adImage, setAdImage] = useState("assets/ad1.png");
+        const adCallbackRef = useRef(null);
+        const [gameResult, setGameResult] = useState(null);
+
+        const today = TARGETS[getTodayIndex()];
+
+        function showAd(imageSrc, cb) {
+          setAdImage(imageSrc); setAdSecs(5); adCallbackRef.current = cb; setAdOpen(true);
+        }
+        useEffect(() => {
+          if (!adOpen) return;
+          const timer = setInterval(() => {
+            setAdSecs((s) => {
+              if (s <= 1) { clearInterval(timer); setAdOpen(false); const cb = adCallbackRef.current; adCallbackRef.current = null; if (cb) cb(); return 0; }
+              return s - 1;
+            });
+          }, 1000);
+          return () => clearInterval(timer);
+        }, [adOpen]);
+
+        function handlePlay() { showAd("assets/ad1.png", () => setView("SIGNIN")); }
+        function handleSignedIn(id) {
+          setUser(id);
+          if (canPlay(id)) { incrementPlays(id); setView("GAME"); }
+          else { setGameResult({ won: false, attempts: 0, answer: today.w }); showAd("assets/ad2.png", () => setView("SCORE")); }
+        }
+        function handleEndGame(won, attempts) {
+          setGameResult({ won, attempts, answer: today.w });
+          showAd("assets/ad2.png", () => setView("SCORE"));
+        }
+        function handlePlayAgain() {
+          if (!user) { setView("SIGNIN"); return; }
+          if (!canPlay(user)) return;
+          incrementPlays(user); setView("GAME");
+        }
+        function handleExit() { setView("WELCOME"); }
+
+        return React.createElement(
+          "div",
+          null,
+          view === "WELCOME" && React.createElement(Welcome, { onPlay: handlePlay }),
+          view === "SIGNIN" && React.createElement(SignIn, { onSignedIn: handleSignedIn, onBack: handleExit }),
+          view === "GAME" && React.createElement(Game, { answer: today.w, hintSpecific: today.specific, onEndGame: handleEndGame, onExit: handleExit }),
+          view === "SCORE" && React.createElement(ScoreCard, { result: gameResult, onPlayAgain: handlePlayAgain, onExit: handleExit, canPlayMore: user ? canPlay(user) : false }),
+          React.createElement(AdModal, { open: adOpen, seconds: adSecs, imageSrc: adImage, onDone: () => {} })
+        );
+      }
+
+      const root = ReactDOM.createRoot(document.getElementById("root"));
+      root.render(React.createElement(App));
+    })();
+  </script>
+</body>
+</html>
